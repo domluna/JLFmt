@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#=
+export JULIA_PROJECT="$(dirname ${BASH_SOURCE[0]})"
+export JULIA_LOAD_PATH=":${JULIA_LOAD_PATH}"
+export JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH}:"
+JULIA="julia --color=yes --startup-file=no -O1 --compile=min"
+CMD="${JULIA} ${BASH_SOURCE[0]}"
+exec $CMD "$@"
+=#
+
+Base.start_reading(stdin)
+
+using Pkg
+Pkg.instantiate()
+
+using JuliaFormatter
+using ArgParse
+
+function parse_commandline()
+    s = ArgParseSettings()
+    @add_arg_table! s begin
+        "paths"
+        help = "paths to format if input not supplied via stdin"
+        nargs = '*'
+        arg_type = String
+        action = :store_arg
+        "-o", "--option"
+        help = "Keyword-arguments to pass to JuliaFormatter.format_text"
+        nargs = 2
+        action = :append_arg
+        "-s", "--style"
+        help = "A formatting style. One of 'blue' or 'yas'"
+        arg_type = String
+    end
+    return parse_args(s)
+end
+
+function parse_val(x)
+    for T in (Int, Float64, Bool)
+        y = tryparse(T, x)
+        y === nothing || return y
+    end
+    return x
+end
+
+function main()
+    raw = parse_commandline()
+    kwargs = Dict{Symbol,Union{Int,Float64,Bool,String,BlueStyle,YASStyle}}()
+
+    if haskey(raw, "style")
+        s = raw["style"]
+        if s == "blue"
+            kwargs[:style] = BlueStyle()
+        elseif s == "yas"
+            kwargs[:style] = YASStyle()
+        elseif s !== nothing
+            error("Unknown style: $s")
+        end
+    end
+
+    for (k, v) in raw["option"]
+        haskey(kwargs, k) && error("Duplicate option passed: $k")
+        haskey(kwargs, "style") && error("Use --style to specify a style")
+        kwargs[Symbol(k)] = parse_val(v)
+    end
+
+    if length(raw["paths"]) > 0 && bytesavailable(stdin) > 0
+        error("Cannot pass input via stdin if 'paths' is specified")
+    elseif bytesavailable(stdin) > 0
+        text = read(stdin, String)
+        print(format_text(text; kwargs...))
+    elseif length(raw["paths"]) > 0
+        JuliaFormatter.format(raw["paths"]; kwargs...)
+    else
+        error("Nothing to format")
+    end
+
+    return nothing
+end
+
+main()
